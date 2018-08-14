@@ -44,7 +44,6 @@ LandSlope_dummies_test = set_dummies(data_test, 'LandSlope')
 Neighborhood_dummies_test = set_dummies(data_test, 'Neighborhood')
 
 
-
 # datasets re-construction to the copies of df
 df = pd.concat([data_train, MSZoning_dummies, Street_dummies, LotShape_dummies, LandContour_dummies, LotConfig_dummies, LandSlope_dummies, Neighborhood_dummies], axis=1)
 df_test = pd.concat([data_test, MSZoning_dummies_test, Street_dummies_test, LotShape_dummies_test, LandContour_dummies_test, LotConfig_dummies_test, LandSlope_dummies_test, Neighborhood_dummies_test], axis=1)
@@ -82,6 +81,8 @@ x_test = test_np[:, 0:]
 ymin, ymax = y_train.min(), y_train.max() 
 y_std = (y_train-ymin)/(ymax-ymin)
 
+
+# define nn function
 def add_layer(inputs,input_size,output_size,activation_function=None):
     with tf.variable_scope("Weights"):
         Weights = tf.Variable(tf.random_normal(shape=[input_size,output_size]),name="weights")
@@ -98,7 +99,7 @@ def add_layer(inputs,input_size,output_size,activation_function=None):
             return activation_function(Wx_plus_b)
 
 
-
+# set tensorflow part 
 xs = tf.placeholder(shape=[None,x_train.shape[1]],dtype=tf.float32,name="inputs")
 ys = tf.placeholder(shape=[None,1],dtype=tf.float32,name="y_true")
 keep_prob_s = tf.placeholder(dtype=tf.float32, name='keep_prob')
@@ -110,20 +111,16 @@ with tf.name_scope("layer_1"):
 with tf.name_scope("y_pred"):
     pred = add_layer(l1,10,1)
 
-# 这里多于的操作，是为了保存pred的操作，做恢复用。我只知道这个笨方法。
+# save pred
 pred = tf.add(pred,0,name='pred')
 
+# calc loss function and choose training model/param
 with tf.name_scope("loss"):
     loss = tf.reduce_mean(tf.reduce_sum(tf.square(ys - pred),reduction_indices=[1]))  # mse
     tf.summary.scalar("loss",tensor=loss)
 with tf.name_scope("train"):
     # train_op =tf.train.GradientDescentOptimizer(learning_rate=0.01).minimize(loss)
     train_op = tf.train.AdamOptimizer(learning_rate=0.01).minimize(loss)
-
-
-
-
-
 
 # draw pics
 fig = plt.figure()
@@ -134,17 +131,18 @@ plt.ion()
 plt.show()
 
 # parameters
-keep_prob=1  # 防止过拟合，取值一般在0.5到0.8。我这里是1，没有做过拟合处理
-ITER =5000  # 训练次数
+keep_prob=1  # prevent from overfitting
+ITER =5000  # how many times to iter
 
 
+# define fitting function
 def fit(X, y, ax, n, keep_prob):
     init = tf.global_variables_initializer()
     feed_dict_train = {ys: y, xs: X, keep_prob_s: keep_prob}
     with tf.Session() as sess:
         saver = tf.train.Saver(tf.global_variables(), max_to_keep=15)
         merged = tf.summary.merge_all()
-        writer = tf.summary.FileWriter(logdir="nn_boston_log", graph=sess.graph)  #写tensorbord
+        writer = tf.summary.FileWriter(logdir="nn_boston_log", graph=sess.graph)  #write tensorbord
         sess.run(init)
         for i in range(n):
             _loss, _ = sess.run([loss, train_op], feed_dict=feed_dict_train)
@@ -154,7 +152,7 @@ def fit(X, y, ax, n, keep_prob):
                 y_pred = sess.run(pred, feed_dict=feed_dict_train)
                 rs = sess.run(merged, feed_dict=feed_dict_train)
                 writer.add_summary(summary=rs, global_step=i)  #写tensorbord
-                saver.save(sess=sess, save_path="nn_boston_model/nn_boston.model", global_step=i) # 保存模型
+                saver.save(sess=sess, save_path="nn_boston_model/nn_boston.model", global_step=i) # save the model
                 try:
                     ax.lines.remove(lines[0])
                 except:
@@ -162,10 +160,74 @@ def fit(X, y, ax, n, keep_prob):
                 lines = ax.plot(range(50), y_pred[0:50], 'r--')
                 plt.pause(1)
 
-        saver.save(sess=sess, save_path="nn_boston_model/nn_boston.model", global_step=n)  # 保存模型
+        saver.save(sess=sess, save_path="nn_boston_model/nn_boston.model", global_step=n)  # save the model
 
-
-
+# try to fit the training data
 fit(X=x_train,y=y_std,n=ITER,keep_prob=keep_prob,ax=ax)
-
 print('Train Finish.')
+
+
+
+def y_scaler(y):
+	ymin, ymax = y.min(), y.max() 
+	y_std = (y_train-ymin)/(ymax-ymin)
+	return y_std
+
+def cross_validation(X,y,keep_prob):
+    with tf.Session() as sess:
+    	# restore saver
+        saver = tf.train.import_meta_graph(meta_graph_or_file="nn_boston_model/nn_boston.model-5000.meta")
+        model_file = tf.train.latest_checkpoint(checkpoint_dir="nn_boston_model")
+        saver.restore(sess=sess,save_path=model_file)
+
+        # init graph
+        graph = tf.get_default_graph()
+
+        # get placeholder from graph
+        xs = graph.get_tensor_by_name("inputs:0")
+        ys = graph.get_tensor_by_name("y_true:0")
+        keep_prob_s = graph.get_tensor_by_name("keep_prob:0")
+
+        # get operation from graph
+        pred = graph.get_tensor_by_name("pred:0")
+
+        # run pred
+        feed_dict = {xs: X, ys: y, keep_prob_s: keep_prob}
+        y_pred = sess.run(pred,feed_dict=feed_dict)
+
+        # calc CV loss
+       	print(((y - y_pred)**2).sum()/y.shape[0])
+    return
+
+y_cv_std = y_scaler(y=y_cv)
+cross_validation(X=x_cv, y=y_cv_std, keep_prob=1)
+
+
+
+# define prediction func
+def predict(X,keep_prob):
+    with tf.Session() as sess:
+
+        # restore saver
+        saver = tf.train.import_meta_graph(meta_graph_or_file="nn_boston_model/nn_boston.model-5000.meta")
+        model_file = tf.train.latest_checkpoint(checkpoint_dir="nn_boston_model")
+        saver.restore(sess=sess,save_path=model_file)
+
+        # init graph
+        graph = tf.get_default_graph()
+
+        # get placeholder from graph
+        xs = graph.get_tensor_by_name("inputs:0")
+        keep_prob_s = graph.get_tensor_by_name("keep_prob:0")
+
+        # get operation from graph
+        pred = graph.get_tensor_by_name("pred:0")
+
+        # run pred
+        feed_dict = {xs: X, keep_prob_s: keep_prob}
+        y_pred = sess.run(pred,feed_dict=feed_dict)
+        
+    return y_pred.reshape(-1,1)
+
+# try to predict the result
+y_pred = predict(X=x_test,keep_prob=1)
