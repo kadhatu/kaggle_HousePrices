@@ -118,7 +118,9 @@ pred = tf.add(pred,0,name='pred')
 
 # calc loss function and choose training model/param
 with tf.name_scope("loss"):
-    loss = tf.reduce_mean(tf.reduce_sum(tf.square(ys - pred),reduction_indices=[1]))  # mse
+    #loss = tf.reduce_mean(tf.reduce_sum(tf.square(ys - pred),reduction_indices=[1]))  # mse
+    # use l2 regularizer for loss function to prevent overfitting
+    loss = tf.reduce_mean(tf.reduce_sum(tf.square(ys - pred) + tf.contrib.layers.l2_regularizer(.1)(weights),reduction_indices=[1]))
     tf.summary.scalar("loss",tensor=loss)
 with tf.name_scope("train"):
     # train_op =tf.train.GradientDescentOptimizer(learning_rate=0.01).minimize(loss)
